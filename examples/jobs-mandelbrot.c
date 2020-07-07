@@ -125,6 +125,7 @@ typedef struct {
 // Context for the task to render sample batches.
 typedef struct {
 	bool* valid;
+	long double zoom;
 	// Coordinates to be sampled.
 	long double complex* restrict coords;
 	// RGB output values.
@@ -166,17 +167,23 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 		
 		// Color the pixel based on if it diverged and how.
 		if(i == maxi){
-			ctx->r_samples[idx] = 0;
-			ctx->g_samples[idx] = 0;
-			ctx->b_samples[idx] = 0;
+			ctx->r_samples[idx] = 0.1;
+			ctx->g_samples[idx] = 0.1;
+			ctx->b_samples[idx] = 0.1;
 		} else {
-			long double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
-			long double n = (i - 1) + rem;
+			// long double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
+			// long double n = (i - 1) + rem;
 			
-			long double phase = 5*log2(n);
-			ctx->r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
-			ctx->g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
-			ctx->b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
+			// long double phase = 5*log2(n);
+			// ctx->r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
+			// ctx->g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
+			// ctx->b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
+			
+			long double dist = fabs(z)*log(fabs(z))/fabs(dz);
+			dist *= 1024/ctx->zoom;
+			ctx->r_samples[idx] = dist;
+			ctx->g_samples[idx] = dist;
+			ctx->b_samples[idx] = dist;
 		}
 	}
 }
@@ -225,9 +232,11 @@ static void generate_tile_job(tina_job* job, void* user_data, void** thread_data
 						goto cleanup;
 					}
 					
+					Transform m = ctx->matrix;
 					render_scanline_ctx* rctx = &render_contexts[batch_cursor];
 					(*rctx) = (render_scanline_ctx){
 						.valid = &ctx->node->requested,
+						.zoom = sqrt(m.a*m.a + m.b*m.b) + sqrt(m.c*m.c + m.d*m.d),
 						.coords = coords + batch_cursor*SAMPLE_BATCH_COUNT,
 						.r_samples = r_samples + batch_cursor*SAMPLE_BATCH_COUNT,
 						.g_samples = g_samples + batch_cursor*SAMPLE_BATCH_COUNT,
