@@ -167,9 +167,9 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 		
 		// Color the pixel based on if it diverged and how.
 		if(i == maxi){
-			ctx->r_samples[idx] = 0.1;
-			ctx->g_samples[idx] = 0.1;
-			ctx->b_samples[idx] = 0.1;
+			ctx->r_samples[idx] = 1;
+			ctx->g_samples[idx] = 0;
+			ctx->b_samples[idx] = 0;
 		} else {
 			// long double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
 			// long double n = (i - 1) + rem;
@@ -464,6 +464,12 @@ static void app_event(const sapp_event *event){
 			Vec2 mpos = TransformPoint(pixel_to_world_matrix(), mouse_pos);
 			Transform t = {scale, 0, 0, scale, mpos.x*(1 - scale), mpos.y*(1 - scale)};
 			view_matrix = TransformMult(view_matrix, t);
+			
+			long double s = sqrt(view_matrix.a*view_matrix.a + view_matrix.b*view_matrix.b);
+			printf("log scale: %f\n", (float)(log(s/0.75)/log(10)));
+			// Size of observable universe is about 10^27 m
+			// Size of hydrogen atom is about 10^-10 m
+			// Planck length is about 10-35 m
 		} break;
 		
 		default: break;
