@@ -167,23 +167,26 @@ static void render_samples_job(tina_job* job, void* user_data, void** thread_dat
 		
 		// Color the pixel based on if it diverged and how.
 		if(i == maxi){
-			ctx->r_samples[idx] = 0.1;
-			ctx->g_samples[idx] = 0.1;
-			ctx->b_samples[idx] = 0.1;
+			ctx->r_samples[idx] = 0;
+			ctx->g_samples[idx] = 0;
+			ctx->b_samples[idx] = 0;
 		} else {
+			ctx->r_samples[idx] = 1;
+			ctx->g_samples[idx] = 1;
+			ctx->b_samples[idx] = 1;
+			
+			// long double dist = fabs(z)*log(fabs(z))/fabs(dz);
+			// dist *= 1024/ctx->zoom;
+			// ctx->r_samples[idx] = dist;
+			// ctx->g_samples[idx] = dist;
+			// ctx->b_samples[idx] = dist;
+			
 			// long double rem = 1 + log2(log2(bailout)) - log2(log2(fabs(z)));
 			// long double n = (i - 1) + rem;
-			
 			// long double phase = 5*log2(n);
 			// ctx->r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
 			// ctx->g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
 			// ctx->b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
-			
-			long double dist = fabs(z)*log(fabs(z))/fabs(dz);
-			dist *= 1024/ctx->zoom;
-			ctx->r_samples[idx] = dist;
-			ctx->g_samples[idx] = dist;
-			ctx->b_samples[idx] = dist;
 		}
 	}
 }
