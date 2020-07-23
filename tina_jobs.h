@@ -141,6 +141,11 @@ void tina_scheduler_wait_blocking(tina_scheduler* sched, tina_group* group, unsi
 #define _TINA_COND_BROADCAST(_SIG_) cnd_broadcast(&_SIG_)
 #endif
 
+#ifndef _TINA_JOBS_PRE_HOOK
+#define _TINA_JOBS_PRE_HOOK(_SCHED_, _JOB_)
+#define _TINA_JOBS_POST_HOOK(_SCHED_, _JOB_)
+#endif
+
 struct tina_job {
 	tina_job_description desc;
 	tina_scheduler* scheduler;
@@ -197,8 +202,10 @@ static uintptr_t _tina_jobs_fiber(tina* fiber, uintptr_t value){
 			job->desc.func(job, job->desc.user_data, &job->thread_data);
 		} _TINA_MUTEX_LOCK(sched->_lock);
 		
+		_TINA_JOBS_PRE_HOOK(sched, job);
 		// Yield the completed status back to the scheduler, and recieve the next job.
 		value = tina_yield(fiber, _TINA_STATUS_COMPLETE);
+		_TINA_JOBS_POST_HOOK(sched, job);
 	}
 	
 	// Unreachable.
