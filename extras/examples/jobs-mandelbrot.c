@@ -39,6 +39,126 @@
 
 #include "tina_jobs.h"
 
+typedef uint16_t fx_word;
+typedef int16_t fx_sword;
+
+typedef uint32_t fx_dword;
+typedef int32_t fx_dsword;
+
+#define FIXED_WORD_SIZE (8*sizeof(fx_word))
+#define FIXED_WORD_COUNT 8
+#define FIXED_INT_CHUNKS 1
+
+typedef struct {
+	fx_word words[FIXED_WORD_COUNT];
+} fixed;
+
+static fixed double_to_fixed(double f){
+	fixed res;
+	
+	int e;
+	int64_t x = frexp(f, &e)*0x8000000000000000;
+	int shift = 63 + FIXED_INT_CHUNKS*16 - FIXED_WORD_COUNT*16 - e;
+	for(int i = 0; i < FIXED_WORD_COUNT; i++){
+		if(shift < 0){
+			res.words[i] = 0;	
+		} else {
+			res.words[i] = x >> (shift > 63 ? 63 : shift);
+		}
+		shift += FIXED_WORD_SIZE;
+	}
+	
+	return res;
+}
+
+static double fixed_to_double(fixed* fx){
+	bool neg = (fx_sword)fx->words[FIXED_WORD_COUNT - 1] < 0;
+	double f = 0, place = pow(0x1p-16, FIXED_WORD_COUNT - FIXED_INT_CHUNKS);
+	fx_dword acc = neg << 16, mask = neg ? 0xFFFF : 0;
+	
+	for(int i = 0; i < FIXED_WORD_COUNT; i++){
+		acc = (acc >> 16) + (fx->words[i] ^ mask);
+		f += (acc & 0xFFFF)*place;
+		place *= 0x1p16;
+	}
+	
+	return neg ? -f : f;
+}
+
+static void print_fixed(const char* label, fixed* fx){
+	double f = fixed_to_double(fx);
+	printf("%6s: % 10.4f -> ", label, f);
+	for(int i = FIXED_WORD_COUNT; i-- > 0;) printf("%04X ", fx->words[i]);
+	printf("\n");
+}
+
+static fixed fxadd(fixed* a, fixed* b){
+	fixed res;
+	fx_dword acc = 0;
+	for(int i = 0; i < FIXED_WORD_COUNT; i++){
+		res.words[i] = acc = (acc >> 16) + a->words[i] + b->words[i];
+	}
+	
+	return res;
+}
+
+static fixed fxsub(fixed* a, fixed* b){
+	fixed res;
+	fx_dsword acc = 0;
+	for(int i = 0; i < FIXED_WORD_COUNT; i++){
+		res.words[i] = acc = (acc >> 16) + a->words[i] - b->words[i];
+	}
+	
+	return res;
+}
+
+static inline bool check_sign(fixed* fx){
+	return ((fx_sword)fx->words[FIXED_WORD_COUNT - 1]) < 0;
+}
+
+static fixed fxmul(fixed* a, fixed* b){
+	// Temporary words to hold a multiplied by words of b
+	fx_word tmp[FIXED_WORD_COUNT + 1] = {};
+	
+	for(int i = 0; i < FIXED_WORD_COUNT; i++){
+		// The inner loop will perform an arithmetic shift right by one word
+		// We need to sign extend the result to put in the high word
+		fx_word high_word = ((fx_sword)tmp[FIXED_WORD_COUNT]) < 0 ? -1 : 0;
+		// Sign extend for a by subtracting bword[i] from the high word
+		if(check_sign(a)) high_word = high_word - b->words[i];
+		
+		fx_dword acc = 0;
+		for(int j = 0; j < FIXED_WORD_COUNT; j++){
+			// Multiply, accumulate, and shift
+			acc += a->words[j]*b->words[i] + tmp[j + 1];
+			tmp[j] = acc;
+			acc >>= FIXED_WORD_SIZE;
+		}
+		tmp[FIXED_WORD_COUNT] = high_word + acc;
+	}
+	
+	// Now to copy to the result.
+	fixed res = {};
+	if(check_sign(b)){
+		// The rest of the bits are copied while sign extending
+		res.words[0] = tmp[0];
+		
+		// Sign extend for b by shifting a up by one word and subtracting
+		fx_dsword acc = 0;
+		// At this point the high word is just overflow and can be skipped
+		for(int i = 0; i < FIXED_WORD_COUNT - 1; i++){
+			acc += tmp[i + 1] - a->words[i];
+			res.words[i + 1] = acc;
+			acc >>= FIXED_WORD_SIZE;
+		}
+	} else {
+		// No sign extension required, just copy
+		for(int i = 0; i < FIXED_WORD_COUNT; i++) res.words[i] = tmp[i];
+	}
+	
+	return res;
+}
+
 enum {
 	// Used as concurrent priority queues for rendering tiles.
 	QUEUE_WORK,
@@ -203,15 +323,16 @@ static void render_samples_job(tina_job* job){
 	float b_samples[SAMPLE_BATCH_COUNT];
 	
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
-		double cr = cr_arr[idx], ci = ci_arr[idx];
-		double zr = cr, zi = ci;
+		fixed cr = double_to_fixed(cr_arr[idx]), ci = double_to_fixed(ci_arr[idx]);
+		fixed zr = cr, zi = ci;
 		double dr = 1, di = 0;
 		double escape = 1;
 		
 		// Iterate until the fractal function diverges.
 		unsigned i = 0;
 		while(true){
-			double zmag_sq = zr*zr + zi*zi;
+			double zrf = fixed_to_double(&zr), zif = fixed_to_double(&zi);
+			double zmag_sq = zrf*zrf + zif*zif;
 			if(zmag_sq > bailout || i >= maxi) break;
 			
 			escape *= 4*zmag_sq;
@@ -220,11 +341,15 @@ static void render_samples_job(tina_job* job){
 				break;
 			}
 			
-			double zr1 = zr*zr - zi*zi + cr;
-			double zi1 = 2*zr*zi + ci;
+			fixed zr_sq = fxmul(&zr, &zr), zi_sq = fxmul(&zi, &zi);
+			fixed zr1 = fxsub(&zr_sq, &zi_sq);
+			zr1 = fxadd(&zr1, &cr);
+			fixed zi1 = fxmul(&zr, &zi);
+			zi1 = fxadd(&zi1, &zi1);
+			zi1 = fxadd(&zi1, &ci);
 			
-			double dr1 = 2*(dr*zr - di*zi) + 1.0;
-			double di1 = 2*(dr*zi + di*zr);
+			double dr1 = 2*(dr*zrf - di*zif) + 1.0;
+			double di1 = 2*(dr*zif + di*zrf);
 			
 			zr = zr1, zi = zi1;
 			dr = dr1, di = di1;
@@ -238,7 +363,8 @@ static void render_samples_job(tina_job* job){
 			g_samples[idx] = 0;
 			b_samples[idx] = 0;
 		} else {
-			double rem = 1 + log2(log2(bailout)) - log2(log2(sqrt(zr*zr + zi*zi)));
+			double zrf = fixed_to_double(&zr), zif = fixed_to_double(&zi);
+			double rem = 1 + log2(log2(bailout)) - log2(log2(sqrt(zrf*zrf + zif*zif)));
 			double n = (i - 1) + rem;
 			
 			double phase = 5*log2(n);
