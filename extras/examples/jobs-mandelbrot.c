@@ -293,6 +293,7 @@ static void render_samples_job(tina_job* job){
 
 	tile_coord tcoord = ctx->node->coord;
 	double scale = coord_to_scale(tcoord)/TEXTURE_SIZE;
+	fixed _scale = double_to_fixed(scale*FIXED_WORD_RADIX);
 	tcoord.x *= TEXTURE_SIZE;
 	tcoord.y *= TEXTURE_SIZE;
 	
@@ -301,11 +302,13 @@ static void render_samples_job(tina_job* job){
 	batch_idx = decode_zcurve(batch_idx);
 	int x0 = 16*(batch_idx & 0x0F), y0 = 16*(batch_idx / 0x10);
 	
-	double cr_arr[SAMPLE_BATCH_COUNT], ci_arr[SAMPLE_BATCH_COUNT];
+	fixed cr_arr[SAMPLE_BATCH_COUNT], ci_arr[SAMPLE_BATCH_COUNT];
 	for(int i = 0; i < TEXTURE_SIZE; i++){
 		int x = x0 + (i & 0x0F), y = y0 + (i / 0x10);
-		cr_arr[i] = (tcoord.x + 2*x - TEXTURE_SIZE + 1)*scale;
-		ci_arr[i] = (tcoord.y + 2*y - TEXTURE_SIZE + 1)*scale;
+		int64_t _x = tcoord.x + 2*x - TEXTURE_SIZE + 1;
+		int64_t _y = tcoord.y + 2*y - TEXTURE_SIZE + 1;
+		cr_arr[i] = fxmul(&(fixed){.words[FIXED_WORD_COUNT - 1] = _x >> FIXED_WORD_SIZE, .words[FIXED_WORD_COUNT - 2] = _x}, &_scale);
+		ci_arr[i] = fxmul(&(fixed){.words[FIXED_WORD_COUNT - 1] = _y >> FIXED_WORD_SIZE, .words[FIXED_WORD_COUNT - 2] = _y}, &_scale);
 	}
 	
 	const unsigned maxi = 256*1024;
@@ -316,7 +319,7 @@ static void render_samples_job(tina_job* job){
 	float b_samples[SAMPLE_BATCH_COUNT];
 	
 	for(unsigned idx = 0; idx < SAMPLE_BATCH_COUNT; idx++){
-		fixed cr = double_to_fixed(cr_arr[idx]), ci = double_to_fixed(ci_arr[idx]);
+		fixed cr = cr_arr[idx], ci = ci_arr[idx];
 		fixed zr = cr, zi = ci;
 		double dr = 1, di = 0;
 		double escape = 1;
@@ -360,16 +363,16 @@ static void render_samples_job(tina_job* job){
 			double rem = 1 + log2(log2(bailout)) - log2(log2(sqrt(zrf*zrf + zif*zif)));
 			double n = (i - 1) + rem;
 			
-			double phase = 5*log2(n);
-			r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
-			g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
-			b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
+			// double phase = 5*log2(n);
+			// r_samples[idx] = 0.5 + 0.5*cos(phase + 0*M_PI/3);
+			// g_samples[idx] = 0.5 + 0.5*cos(phase + 2*M_PI/3);
+			// b_samples[idx] = 0.5 + 0.5*cos(phase + 4*M_PI/3);
 			
-			// double dist = sqrt(zr*zr + zi*zi)*log(sqrt(zr*zr + zi*zi))/sqrt(dr*dr + di*di);
-			// double v = dist*exp2(tcoord.z + 0);
-			// r_samples[idx] = v;
-			// g_samples[idx] = v;
-			// b_samples[idx] = v;
+			double dist = sqrt(zrf*zrf + zif*zif)*log(sqrt(zrf*zrf + zif*zif))/sqrt(dr*dr + di*di);
+			double v = dist*exp2(tcoord.z + 4);
+			r_samples[idx] = v;
+			g_samples[idx] = v;
+			b_samples[idx] = v;
 		}
 	}
 	
