@@ -39,15 +39,16 @@
 
 #include "tina_jobs.h"
 
-typedef uint16_t fx_word;
-typedef int16_t fx_sword;
+typedef uint32_t fx_word;
+typedef int32_t fx_sword;
 
-typedef uint32_t fx_dword;
-typedef int32_t fx_dsword;
+typedef uint64_t fx_dword;
+typedef int64_t fx_dsword;
 
+#define FIXED_WORD_COUNT 4
 #define FIXED_WORD_SIZE (8*sizeof(fx_word))
-#define FIXED_WORD_COUNT 8
-#define FIXED_INT_CHUNKS 1
+#define FIXED_WORD_RADIX 0x1p32
+#define FIXED_WORD_FORMAT "%08X "
 
 typedef struct {
 	fx_word words[FIXED_WORD_COUNT];
@@ -56,39 +57,31 @@ typedef struct {
 static fixed double_to_fixed(double f){
 	fixed res;
 	
-	int e;
-	int64_t x = frexp(f, &e)*0x8000000000000000;
-	int shift = 63 + FIXED_INT_CHUNKS*16 - FIXED_WORD_COUNT*16 - e;
-	for(int i = 0; i < FIXED_WORD_COUNT; i++){
-		if(shift < 0){
-			res.words[i] = 0;	
-		} else {
-			res.words[i] = x >> (shift > 63 ? 63 : shift);
-		}
-		shift += FIXED_WORD_SIZE;
+	fx_word sub = res.words[FIXED_WORD_COUNT - 1] = floor(f);
+	f = (f - (fx_sword)sub)*FIXED_WORD_RADIX;
+	for(int i = FIXED_WORD_COUNT - 2; i >= 0; i--){
+		sub = res.words[i] = floor(f);
+		f = (f - sub)*FIXED_WORD_RADIX;
 	}
 	
 	return res;
 }
 
 static double fixed_to_double(fixed* fx){
-	bool neg = (fx_sword)fx->words[FIXED_WORD_COUNT - 1] < 0;
-	double f = 0, place = pow(0x1p-16, FIXED_WORD_COUNT - FIXED_INT_CHUNKS);
-	fx_dword acc = neg << 16, mask = neg ? 0xFFFF : 0;
-	
-	for(int i = 0; i < FIXED_WORD_COUNT; i++){
-		acc = (acc >> 16) + (fx->words[i] ^ mask);
-		f += (acc & 0xFFFF)*place;
-		place *= 0x1p16;
+	double f = fx->words[0];
+	for(int i = 1; i < FIXED_WORD_COUNT - 1; i++){
+		f /= FIXED_WORD_RADIX;
+		f += fx->words[i];
 	}
-	
-	return neg ? -f : f;
+	f /= FIXED_WORD_RADIX;
+	f += (fx_sword)fx->words[FIXED_WORD_COUNT - 1];
+	return f;
 }
 
 static void print_fixed(const char* label, fixed* fx){
 	double f = fixed_to_double(fx);
 	printf("%6s: % 10.4f -> ", label, f);
-	for(int i = FIXED_WORD_COUNT; i-- > 0;) printf("%04X ", fx->words[i]);
+	for(int i = FIXED_WORD_COUNT; i-- > 0;) printf(FIXED_WORD_FORMAT, fx->words[i]);
 	printf("\n");
 }
 
@@ -96,7 +89,7 @@ static fixed fxadd(fixed* a, fixed* b){
 	fixed res;
 	fx_dword acc = 0;
 	for(int i = 0; i < FIXED_WORD_COUNT; i++){
-		res.words[i] = acc = (acc >> 16) + a->words[i] + b->words[i];
+		res.words[i] = acc = (acc >> FIXED_WORD_SIZE) + a->words[i] + b->words[i];
 	}
 	
 	return res;
@@ -106,7 +99,7 @@ static fixed fxsub(fixed* a, fixed* b){
 	fixed res;
 	fx_dsword acc = 0;
 	for(int i = 0; i < FIXED_WORD_COUNT; i++){
-		res.words[i] = acc = (acc >> 16) + a->words[i] - b->words[i];
+		res.words[i] = acc = (acc >> FIXED_WORD_SIZE) + a->words[i] - b->words[i];
 	}
 	
 	return res;
@@ -130,7 +123,7 @@ static fixed fxmul(fixed* a, fixed* b){
 		fx_dword acc = 0;
 		for(int j = 0; j < FIXED_WORD_COUNT; j++){
 			// Multiply, accumulate, and shift
-			acc += a->words[j]*b->words[i] + tmp[j + 1];
+			acc += (fx_dword)a->words[j]*(fx_dword)b->words[i] + (fx_dword)tmp[j + 1];
 			tmp[j] = acc;
 			acc >>= FIXED_WORD_SIZE;
 		}
@@ -147,7 +140,7 @@ static fixed fxmul(fixed* a, fixed* b){
 		fx_dsword acc = 0;
 		// At this point the high word is just overflow and can be skipped
 		for(int i = 0; i < FIXED_WORD_COUNT - 1; i++){
-			acc += tmp[i + 1] - a->words[i];
+			acc += (fx_dsword)tmp[i + 1] - (fx_dsword)a->words[i];
 			res.words[i + 1] = acc;
 			acc >>= FIXED_WORD_SIZE;
 		}
