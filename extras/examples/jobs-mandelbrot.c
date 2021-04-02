@@ -110,15 +110,18 @@ static inline bool check_sign(fixed* fx){
 }
 
 static fixed fxmul(fixed* a, fixed* b){
+	fx_word a_sign_mask = (fx_sword)a->words[FIXED_WORD_COUNT - 1] >> (FIXED_WORD_SIZE - 1);
+	fx_word b_sign_mask = (fx_sword)b->words[FIXED_WORD_COUNT - 1] >> (FIXED_WORD_SIZE - 1);
+	
 	// Temporary words to hold a multiplied by words of b
 	fx_word tmp[FIXED_WORD_COUNT + 1] = {};
 	
 	for(int i = 0; i < FIXED_WORD_COUNT; i++){
 		// The inner loop will perform an arithmetic shift right by one word
 		// We need to sign extend the result to put in the high word
-		fx_word high_word = ((fx_sword)tmp[FIXED_WORD_COUNT]) < 0 ? -1 : 0;
+		fx_word high_word = (fx_sword)tmp[FIXED_WORD_COUNT] >> (FIXED_WORD_SIZE - 1);
 		// Sign extend for a by subtracting bword[i] from the high word
-		if(check_sign(a)) high_word = high_word - b->words[i];
+		high_word -= a_sign_mask & b->words[i];
 		
 		fx_dword acc = 0;
 		for(int j = 0; j < FIXED_WORD_COUNT; j++){
@@ -130,23 +133,16 @@ static fixed fxmul(fixed* a, fixed* b){
 		tmp[FIXED_WORD_COUNT] = high_word + acc;
 	}
 	
-	// Now to copy to the result.
-	fixed res = {};
-	if(check_sign(b)){
-		// The rest of the bits are copied while sign extending
-		res.words[0] = tmp[0];
-		
-		// Sign extend for b by shifting a up by one word and subtracting
-		fx_dsword acc = 0;
-		// At this point the high word is just overflow and can be skipped
-		for(int i = 0; i < FIXED_WORD_COUNT - 1; i++){
-			acc += (fx_dsword)tmp[i + 1] - (fx_dsword)a->words[i];
-			res.words[i + 1] = acc;
-			acc >>= FIXED_WORD_SIZE;
-		}
-	} else {
-		// No sign extension required, just copy
-		for(int i = 0; i < FIXED_WORD_COUNT; i++) res.words[i] = tmp[i];
+	// Copy into the result while sign extending for b.
+	fixed res = {.words = {tmp[0]}};
+	
+	// Sign extend for b by shifting a up by one word and subtracting
+	fx_dsword acc = 0;
+	// At this point the high word is just overflow and can be skipped
+	for(int i = 0; i < FIXED_WORD_COUNT - 1; i++){
+		acc += (fx_dsword)tmp[i + 1] - (fx_dsword)(a->words[i] & b_sign_mask);
+		res.words[i + 1] = acc;
+		acc >>= FIXED_WORD_SIZE;
 	}
 	
 	return res;
